@@ -4,8 +4,21 @@ const recordController = require("../controllers/recordController");
 const { verifyToken, requireRole } = require("../middleware/auth");
 const upload = require("../middleware/upload");
 
-// Upload encrypted file (Patient only)
-router.post("/upload", verifyToken, requireRole(["patient"]), upload.single("file"), recordController.uploadRecord);
+// Upload encrypted file (Patient only) with inline multer error catching
+router.post(
+  "/upload",
+  verifyToken,
+  requireRole(["patient"]),
+  (req, res, next) => {
+    upload.single("file")(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({ message: err.message || "File upload failed" });
+      }
+      next();
+    });
+  },
+  recordController.uploadRecord
+);
 
 // Confirm on-chain registration transaction
 router.post("/confirm", verifyToken, requireRole(["patient"]), recordController.confirmRecordOnChain);

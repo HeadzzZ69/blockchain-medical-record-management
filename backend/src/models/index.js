@@ -9,6 +9,9 @@ const AuditLog = require("./AuditLog");
 const Notification = require("./Notification");
 const Department = require("./Department");
 const Appointment = require("./Appointment");
+const Prescription = require("./Prescription");
+const LabReport = require("./LabReport");
+const Consultation = require("./Consultation");
 
 module.exports = {
   User,
@@ -22,4 +25,7 @@ module.exports = {
   Notification,
   Department,
   Appointment,
+  Prescription,
+  LabReport,
+  Consultation,
 };

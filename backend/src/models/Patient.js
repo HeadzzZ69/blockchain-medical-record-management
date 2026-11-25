@@ -28,22 +28,27 @@ const patientSchema = new mongoose.Schema(
     },
     gender: {
       type: String,
-      enum: ["Male", "Female", "Other", "Prefer not to say", ""],
-      default: "",
+      default: "Other",
     },
     bloodGroup: {
       type: String,
-      enum: ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", ""],
-      default: "",
+      default: "O+",
     },
     address: {
       type: String,
       default: "",
     },
+    phone: {
+      type: String,
+      default: "",
+    },
+    email: {
+      type: String,
+      default: "",
+    },
     emergencyContact: {
-      name: { type: String, default: "" },
-      phone: { type: String, default: "" },
-      relation: { type: String, default: "" },
+      type: mongoose.Schema.Types.Mixed,
+      default: () => ({ name: "Emergency Services", phone: "+1 (555) 911-0199", relation: "Local Emergency" }),
     },
     allergies: {
       type: [String],
@@ -53,6 +58,10 @@ const patientSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    medicalHistory: {
+      type: [mongoose.Schema.Types.Mixed],
+      default: [],
+    },
     userRef: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -60,5 +69,10 @@ const patientSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+patientSchema.pre("validate", function (next) {
+  if (this.walletAddress) this.walletAddress = this.walletAddress.toLowerCase();
+  next();
+});
 
 module.exports = mongoose.model("Patient", patientSchema);

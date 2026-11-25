@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const MedicalRecord = require("../models/MedicalRecord");
 const AuditLog = require("../models/AuditLog");
+const AccessRequest = require("../models/AccessRequest");
 const { encryptBuffer, decryptBuffer, calculateSHA256 } = require("../utils/crypto");
 const blockchainService = require("../services/blockchainService");
 
@@ -20,10 +21,16 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 async function uploadRecord(req, res) {
   try {
     if (!req.file) {
-      return res.status(400).json({ message: "No file uploaded" });
+      return res.status(400).json({ message: "No file uploaded. Please select a PDF, JPG, or PNG report." });
     }
 
-    const { category, description } = req.body;
+    if (!fs.existsSync(UPLOADS_DIR)) {
+      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    }
+
+    const category = req.body.category || req.body.recordType || "General Record";
+    const description = req.body.description || "";
+    const recordTitle = req.body.recordTitle || req.body.title || req.file.originalname;
     const patientWallet = req.user.walletAddress.toLowerCase();
 
     // 1. Calculate SHA-256 of original file buffer
@@ -38,30 +45,43 @@ async function uploadRecord(req, res) {
     const encryptedFilePath = path.join(UPLOADS_DIR, encryptedFileName);
     fs.writeFileSync(encryptedFilePath, encrypted);
 
-    // 4. Save metadata in MongoDB
+    // 4. Save metadata in MongoDB with complete cross-compatible field mapping
     const record = new MedicalRecord({
       recordId,
       patientWallet,
+      uploaderWallet: patientWallet,
+      recordTitle,
       fileName: req.file.originalname,
-      fileType: req.file.mimetype,
-      fileSize: req.file.size,
+      recordType: category,
+      category,
+      description,
       encryptedFileName,
+      encryptedFileReference: encryptedFileName,
       iv,
+      encryptionIv: iv,
       authTag,
+      encryptionTag: authTag,
       fileHash,
-      category: category || "General Record",
-      description: description || "",
+      fileType: req.file.mimetype,
+      mimeType: req.file.mimetype,
+      fileSize: req.file.size,
       uploadDate: new Date(),
+      accessStatus: "active",
+      isOnChainRegistered: false,
     });
 
     await record.save();
+
+    console.log(`[UploadRecord] Record created successfully: ${recordId} for patient ${patientWallet}`);
 
     return res.status(201).json({
       message: "Record encrypted and stored off-chain successfully.",
       record: {
         recordId: record.recordId,
+        recordTitle: record.recordTitle,
         fileName: record.fileName,
         fileType: record.fileType,
+        mimeType: record.mimeType,
         fileSize: record.fileSize,
         fileHash: record.fileHash,
         category: record.category,
@@ -71,7 +91,10 @@ async function uploadRecord(req, res) {
     });
   } catch (error) {
     console.error("Error in uploadRecord:", error);
-    return res.status(500).json({ message: "Failed to upload and encrypt record", error: error.message });
+    return res.status(500).json({
+      message: "Failed to upload and encrypt record",
+      error: error.message,
+    });
   }
 }
 
@@ -123,14 +146,31 @@ async function getPatientRecords(req, res) {
       return res.json({ records: allPatientRecords });
     }
 
-    // If caller is a doctor or hospital, verify blockchain access for each record
+    // If caller is a doctor or hospital, verify access for each record
     const accessibleRecords = [];
     for (const record of allPatientRecords) {
-      const hasAccess = await blockchainService.verifyRecordAccess(
-        targetPatientWallet,
-        callerWallet,
-        record.recordId
-      );
+      let hasAccess = false;
+      try {
+        hasAccess = await blockchainService.verifyRecordAccess(
+          targetPatientWallet,
+          callerWallet,
+          record.recordId
+        );
+      } catch (err) {
+        hasAccess = false;
+      }
+
+      if (!hasAccess) {
+        const approvedReq = await AccessRequest.findOne({
+          patientWallet: targetPatientWallet,
+          $or: [{ requesterWallet: callerWallet }, { doctorWallet: callerWallet }, { hospitalWallet: callerWallet }],
+          $or: [{ recordId: record.recordId }, { recordIds: record.recordId }],
+          status: "approved",
+          expiresAt: { $gt: new Date() },
+        });
+        if (approvedReq) hasAccess = true;
+      }
+
       if (hasAccess) {
         accessibleRecords.push(record);
       }
@@ -167,7 +207,22 @@ async function downloadRecord(req, res) {
 
     if (!isAuthorized) {
       // Must verify on the blockchain smart contract!
-      isAuthorized = await blockchainService.verifyRecordAccess(patientWallet, callerWallet, recordId);
+      try {
+        isAuthorized = await blockchainService.verifyRecordAccess(patientWallet, callerWallet, recordId);
+      } catch (err) {
+        isAuthorized = false;
+      }
+    }
+
+    if (!isAuthorized) {
+      const approvedReq = await AccessRequest.findOne({
+        patientWallet,
+        $or: [{ requesterWallet: callerWallet }, { doctorWallet: callerWallet }, { hospitalWallet: callerWallet }],
+        $or: [{ recordId: record.recordId }, { recordIds: record.recordId }],
+        status: "approved",
+        expiresAt: { $gt: new Date() },
+      });
+      if (approvedReq) isAuthorized = true;
     }
 
     if (!isAuthorized) {
@@ -177,15 +232,19 @@ async function downloadRecord(req, res) {
     }
 
     // Read encrypted file
-    const encryptedFilePath = path.join(UPLOADS_DIR, record.encryptedFileName);
+    const targetFileName = record.encryptedFileName || record.encryptedFileReference || `${record.recordId}.enc`;
+    const encryptedFilePath = path.join(UPLOADS_DIR, targetFileName);
     if (!fs.existsSync(encryptedFilePath)) {
+      console.warn(`[DownloadRecord] Encrypted file not found on disk at: ${encryptedFilePath}`);
       return res.status(404).json({ message: "Encrypted file artifact not found on server storage" });
     }
 
     const encryptedData = fs.readFileSync(encryptedFilePath);
 
     // Decrypt AES-256-GCM
-    const decryptedBuffer = decryptBuffer(encryptedData, record.iv, record.authTag);
+    const iv = record.iv || record.encryptionIv;
+    const authTag = record.authTag || record.encryptionTag;
+    const decryptedBuffer = decryptBuffer(encryptedData, iv, authTag);
 
     // Audit log
     await AuditLog.create({
@@ -193,12 +252,12 @@ async function downloadRecord(req, res) {
       patientWallet,
       recordId,
       action: "ACCESS_RECORD",
-      details: `${req.user.name || callerWallet} decrypted and accessed ${record.fileName}`,
+      details: `${req.user.name || callerWallet} decrypted and accessed ${record.fileName || record.recordTitle}`,
     });
 
     // Send decrypted file
-    res.setHeader("Content-Type", record.fileType || "application/octet-stream");
-    res.setHeader("Content-Disposition", `attachment; filename="${record.fileName}"`);
+    res.setHeader("Content-Type", record.fileType || record.mimeType || "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename="${record.fileName || record.recordTitle || 'medical_document.pdf'}"`);
     return res.send(decryptedBuffer);
   } catch (error) {
     console.error("Error in downloadRecord:", error);

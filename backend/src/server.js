@@ -11,6 +11,7 @@ const accessRoutes = require("./routes/accessRoutes");
 const auditRoutes = require("./routes/auditRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const appointmentRoutes = require("./routes/appointmentRoutes");
+const clinicalRoutes = require("./routes/clinicalRoutes");
 const syncService = require("./services/syncService");
 
 const app = express();
@@ -44,13 +45,42 @@ app.use("/api/access", accessRoutes);
 app.use("/api/audit", auditRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/appointments", appointmentRoutes);
+app.use("/api/clinical", clinicalRoutes);
 
-// Error handling middleware
+// Centralized Express error handling middleware
 app.use((err, req, res, next) => {
-  console.error("Unhandled Server Error:", err.stack || err.message);
+  const endpoint = `${req.method} ${req.originalUrl || req.url}`;
+  console.error(`[Server Error] [${endpoint}] ${err.name || "Error"}:`, err.message);
+
+  if (err.name === "MulterError" || err.code === "LIMIT_FILE_SIZE") {
+    return res.status(400).json({
+      success: false,
+      errorType: "UploadValidationError",
+      message: err.code === "LIMIT_FILE_SIZE" ? "File size exceeds the 10 MB limit." : err.message,
+    });
+  }
+
+  if (err.name === "ValidationError") {
+    const messages = Object.values(err.errors || {}).map((e) => e.message);
+    return res.status(400).json({
+      success: false,
+      errorType: "DatabaseValidationError",
+      message: messages.join("; ") || err.message,
+    });
+  }
+
+  if (err.name === "CastError") {
+    return res.status(400).json({
+      success: false,
+      errorType: "InvalidIdentifierError",
+      message: `Invalid format for field '${err.path}'`,
+    });
+  }
+
   res.status(err.status || 500).json({
+    success: false,
+    errorType: err.name || "InternalServerError",
     message: err.message || "Internal Server Error",
-    error: process.env.NODE_ENV === "development" ? err : {},
   });
 });
 

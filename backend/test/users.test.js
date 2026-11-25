@@ -22,6 +22,8 @@ async function runUsersTest() {
   console.log("==================================================");
 
   await connectDB();
+  const { seedComprehensiveDemoData } = require("../src/utils/seedData");
+  await seedComprehensiveDemoData();
 
   // 1. Verify all 11 Mongoose models exist and are constructors
   console.log("\n[TEST 1] Verifying 11 Mongoose Models...");
