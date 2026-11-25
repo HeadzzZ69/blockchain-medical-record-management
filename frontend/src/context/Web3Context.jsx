@@ -30,6 +30,10 @@ export const Web3Provider = ({ children }) => {
   // Refs to track current account and prevent race conditions or duplicate submissions
   const currentAccountRef = useRef(null);
   const isTxLockedRef = useRef(false);
+  // Per-wallet queue to serialize transactions strictly one-by-one
+  const walletQueuesRef = useRef(new Map());
+  const lastKnownGenesisRef = useRef(null);
+  const lastKnownNoncesRef = useRef(new Map());
 
   /**
    * Helper to update URL location without hard page reload
@@ -308,114 +312,249 @@ export const Web3Provider = ({ children }) => {
   };
 
   /**
+   * Helper: Wrap contract in a Proxy that dynamically injects the exact on-chain nonce
+   * for all state-mutating transactions, ensuring MetaMask cannot submit with a stale cached nonce.
+   */
+  const wrapContractWithDynamicNonce = (baseContract, nonce, walletAddr) => {
+    return new Proxy(baseContract, {
+      get(target, prop, receiver) {
+        const orig = target[prop];
+        if (typeof orig === 'function') {
+          const fragment = target.interface?.getFunction(prop);
+          // Only mutate state transactions (not view, not pure, not constant)
+          if (
+            fragment &&
+            !fragment.constant &&
+            fragment.stateMutability !== 'view' &&
+            fragment.stateMutability !== 'pure'
+          ) {
+            return async function (...args) {
+              const lastArg = args[args.length - 1];
+              const isOverride =
+                lastArg &&
+                typeof lastArg === 'object' &&
+                !Array.isArray(lastArg) &&
+                (
+                  'nonce' in lastArg ||
+                  'gasLimit' in lastArg ||
+                  'value' in lastArg ||
+                  'gasPrice' in lastArg ||
+                  'maxFeePerGas' in lastArg
+                );
+
+              let finalArgs;
+              if (isOverride) {
+                finalArgs = [...args.slice(0, -1), { nonce, ...lastArg }];
+              } else {
+                finalArgs = [...args, { nonce }];
+              }
+
+              console.log(
+                `[Blockchain Tx] Wallet: ${walletAddr} | Contract: ${target.target} | Method: ${prop}() | Assigned Nonce: ${nonce} | Chain ID: 31337`
+              );
+              return orig.apply(target, finalArgs);
+            };
+          }
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+  };
+
+  /**
    * SAFE TRANSACTION EXECUTOR:
-   * - Prevents duplicate concurrent transaction calls (mutex lock).
-   * - Checks network and contract existence.
-   * - Intercepts MetaMask Nonce too high / Nonce mismatch errors and surfaces solution.
-   * - Intercepts "Record does not exist" and user rejection.
+   * - Serializes transactions per wallet via a strict FIFO queue.
+   * - Queries live on-chain nonce from Hardhat node (pending block tag).
+   * - Injects exact on-chain nonce into the transaction to prevent MetaMask stale cache mismatch.
+   * - Awaits block confirmation before clearing the queue.
+   * - Intercepts Hardhat restart & nonce desynchronization with actionable modal.
+   * - Produces comprehensive non-sensitive audit logs.
    */
   const executeTx = async (txFn, progressCallback) => {
-    if (isTxLockedRef.current) {
-      const lockError = new Error('Another transaction is currently in progress. Please wait for it to complete.');
-      lockError.userFriendly = true;
-      throw lockError;
+    if (!window.ethereum) {
+      throw new Error('MetaMask is not installed.');
     }
 
-    if (!contract || !signer || !account) {
-      throw new Error('Wallet or smart contract not initialized. Please connect your MetaMask wallet.');
+    const activeAccounts = await window.ethereum.request({ method: 'eth_accounts' });
+    if (!activeAccounts || activeAccounts.length === 0) {
+      throw new Error('MetaMask is locked or no account is connected.');
     }
 
+    const currentAddr = activeAccounts[0].toLowerCase();
+    const walletKey = currentAddr;
+
+    // Check if network is correct
     if (isWrongNetwork) {
       await switchNetwork();
     }
 
-    try {
-      isTxLockedRef.current = true;
-      setIsTxPending(true);
-      setTxProgress({ status: 'waiting', message: 'Prompting MetaMask for signature...' });
-      if (progressCallback) progressCallback('Waiting for MetaMask signature...');
+    // Per-wallet FIFO queue chaining: subsequent transactions wait for prior ones to confirm!
+    const previousQueue = walletQueuesRef.current.get(walletKey) || Promise.resolve();
 
-      const txResult = await txFn(contract, signer, provider);
+    const currentOperation = (async () => {
+      // Wait for any prior transaction from this wallet to complete
+      await previousQueue.catch((prevErr) => {
+        console.warn(`[TxQueue] Previous transaction for ${walletKey} finished with error:`, prevErr.message);
+      });
 
-      if (txResult && typeof txResult.wait === 'function') {
-        setTxProgress({ status: 'confirming', message: 'Transaction submitted. Waiting for block confirmation...' });
-        if (progressCallback) progressCallback('Waiting for block confirmation on Hardhat node...');
+      // Obtain a fresh browser provider and signer directly bound to current wallet
+      const browserProvider = new ethers.BrowserProvider(window.ethereum);
+      const activeSigner = await browserProvider.getSigner(currentAddr);
+      setSigner(activeSigner);
+      setProvider(browserProvider);
 
-        const receipt = await txResult.wait();
-        setTxProgress({ status: 'success', message: 'Transaction confirmed successfully on blockchain!' });
-        if (progressCallback) progressCallback('Transaction confirmed!');
-        return receipt;
-      }
-
-      setTxProgress({ status: 'success', message: 'Action completed successfully!' });
-      return txResult;
-    } catch (err) {
-      console.error('[Web3Context] executeTx error:', err);
-      const errMsg = (err.message || '').toLowerCase();
-      const errReason = (err.reason || '').toLowerCase();
-      const errDataMsg = (err.data?.message || '').toLowerCase();
-      const fullErrStr = `${errMsg} ${errReason} ${errDataMsg}`;
-
-      // 1. Detect Nonce desynchronization error
-      if (
-        fullErrStr.includes('nonce too high') ||
-        fullErrStr.includes('expected nonce') ||
-        fullErrStr.includes('nonce') && fullErrStr.includes('automining') ||
-        err.code === -32603 && fullErrStr.includes('nonce')
-      ) {
-        const errorDetail = err.data?.message || err.message || 'Nonce too high. Expected nonce to be 1 but got 3.';
-        setNonceModalState({ isOpen: true, details: errorDetail });
-        const friendlyNonceErr = new Error(
-          'MetaMask Nonce Desynchronized: Local blockchain restarted. Please open MetaMask -> Settings -> Advanced -> click "Clear activity tab data" (Reset account).'
+      // Verify contract bytecode is intact
+      const isDeployed = await verifyContractDeployment(browserProvider, contractInfoFallback.contractAddress);
+      if (!isDeployed) {
+        throw new Error(
+          `Hardhat restarted: Smart contract not deployed at ${contractInfoFallback.contractAddress}. Please run deployment script.`
         );
-        friendlyNonceErr.userFriendly = true;
-        setTxProgress({ status: 'error', message: friendlyNonceErr.message });
-        throw friendlyNonceErr;
       }
 
-      // 2. Detect Record does not exist
-      if (fullErrStr.includes('record does not exist')) {
-        const friendlyRecordErr = new Error(
-          'Record does not exist on blockchain: This record reference has not been anchored to the smart contract yet.'
-        );
-        friendlyRecordErr.userFriendly = true;
-        setTxProgress({ status: 'error', message: friendlyRecordErr.message });
-        throw friendlyRecordErr;
+      // Check for Hardhat node restart via genesis block hash
+      try {
+        const genesis = await browserProvider.getBlock(0);
+        if (genesis && genesis.hash) {
+          if (lastKnownGenesisRef.current && lastKnownGenesisRef.current !== genesis.hash) {
+            console.warn('[Web3Context] Hardhat restart detected: Genesis hash changed. Resetting transaction cache.');
+            lastKnownNoncesRef.current.clear();
+          }
+          lastKnownGenesisRef.current = genesis.hash;
+        }
+      } catch (genErr) {
+        // block 0 query warning
       }
 
-      // 3. Detect User rejection
-      if (err.code === 4001 || fullErrStr.includes('user rejected') || fullErrStr.includes('action_rejected')) {
-        const cancelErr = new Error('Transaction was cancelled in MetaMask.');
-        cancelErr.userFriendly = true;
-        setTxProgress({ status: 'error', message: cancelErr.message });
-        throw cancelErr;
-      }
+      // Query live on-chain nonce for this account
+      const onChainNonce = await browserProvider.getTransactionCount(currentAddr, 'pending');
+      lastKnownNoncesRef.current.set(walletKey, onChainNonce);
 
-      setTxProgress({ status: 'error', message: err.reason || err.message || 'Transaction failed.' });
-      throw err;
-    } finally {
-      isTxLockedRef.current = false;
-      setIsTxPending(false);
-    }
+      console.log(`[TxQueue] Preparing tx for ${currentAddr} | Live on-chain nonce: ${onChainNonce}`);
+
+      // Create fresh contract instance bound to fresh signer
+      const activeContract = new ethers.Contract(
+        contractInfoFallback.contractAddress,
+        contractInfoFallback.abi,
+        activeSigner
+      );
+
+      // Wrap with nonce-injecting proxy
+      const safeContract = wrapContractWithDynamicNonce(activeContract, onChainNonce, currentAddr);
+
+      try {
+        isTxLockedRef.current = true;
+        setIsTxPending(true);
+        setTxProgress({ status: 'waiting', message: `Prompting MetaMask for signature (Nonce: ${onChainNonce})...` });
+        if (progressCallback) progressCallback(`Waiting for MetaMask signature (Nonce: ${onChainNonce})...`);
+
+        // Execute caller transaction using safe proxy
+        const txResult = await txFn(safeContract, activeSigner, browserProvider, { nonce: onChainNonce });
+
+        if (txResult && typeof txResult.wait === 'function') {
+          console.log(
+            `[TxSubmitted] Wallet: ${currentAddr} | TxHash: ${txResult.hash} | Nonce: ${txResult.nonce ?? onChainNonce} | Waiting for block confirmation...`
+          );
+          setTxProgress({
+            status: 'confirming',
+            message: `Tx ${txResult.hash.slice(0, 10)}... submitted. Waiting for confirmation...`,
+          });
+          if (progressCallback) progressCallback('Waiting for block confirmation on Hardhat node...');
+
+          const receipt = await txResult.wait();
+          console.log(
+            `[TxConfirmed] Wallet: ${currentAddr} | TxHash: ${receipt.hash} | Block: ${receipt.blockNumber} | Status: SUCCESS`
+          );
+          setTxProgress({ status: 'success', message: 'Transaction confirmed successfully on blockchain!' });
+          if (progressCallback) progressCallback('Transaction confirmed!');
+          return receipt;
+        }
+
+        setTxProgress({ status: 'success', message: 'Action completed successfully!' });
+        return txResult;
+      } catch (err) {
+        console.error('[Web3Context] executeTx error:', err);
+        const errMsg = (err.message || '').toLowerCase();
+        const errReason = (err.reason || '').toLowerCase();
+        const errDataMsg = (err.data?.message || '').toLowerCase();
+        const fullErrStr = `${errMsg} ${errReason} ${errDataMsg}`;
+
+        // 1. Detect Nonce desynchronization error
+        if (
+          fullErrStr.includes('nonce too high') ||
+          fullErrStr.includes('expected nonce') ||
+          fullErrStr.includes('nonce') && fullErrStr.includes('automining') ||
+          (err.code === -32603 && fullErrStr.includes('nonce'))
+        ) {
+          const detailMatch = err.data?.message || err.message || '';
+          setNonceModalState({
+            isOpen: true,
+            details: detailMatch || `Nonce too high: Hardhat expected nonce ${onChainNonce}`,
+          });
+
+          const friendlyNonceErr = new Error(
+            `MetaMask Nonce Desynchronized: Hardhat expected nonce ${onChainNonce}. Please open MetaMask -> Settings -> Advanced -> click "Clear activity tab data" (Reset account).`
+          );
+          friendlyNonceErr.userFriendly = true;
+          setTxProgress({ status: 'error', message: friendlyNonceErr.message });
+          throw friendlyNonceErr;
+        }
+
+        // 2. Detect Record does not exist
+        if (fullErrStr.includes('record does not exist')) {
+          const friendlyRecordErr = new Error(
+            'Record does not exist on blockchain: This record reference has not been anchored to the smart contract yet.'
+          );
+          friendlyRecordErr.userFriendly = true;
+          setTxProgress({ status: 'error', message: friendlyRecordErr.message });
+          throw friendlyRecordErr;
+        }
+
+        // 3. Detect User rejection
+        if (err.code === 4001 || fullErrStr.includes('user rejected') || fullErrStr.includes('action_rejected')) {
+          const cancelErr = new Error('Transaction was cancelled in MetaMask.');
+          cancelErr.userFriendly = true;
+          setTxProgress({ status: 'error', message: cancelErr.message });
+          throw cancelErr;
+        }
+
+        setTxProgress({ status: 'error', message: err.reason || err.message || 'Transaction failed.' });
+        throw err;
+      } finally {
+        isTxLockedRef.current = false;
+        setIsTxPending(false);
+      }
+    })();
+
+    walletQueuesRef.current.set(walletKey, currentOperation);
+    return await currentOperation;
   };
 
   /**
    * Helper: Ensure a medical record exists on the smart contract before granting/revoking access.
-   * If it doesn't exist on-chain yet, anchors it automatically using contract.addRecord!
+   * If it doesn't exist on-chain yet, anchors it automatically through executeTx!
    */
   const ensureRecordAnchored = async (recordId, fallbackFileHash, fallbackCategory) => {
-    if (!contract || !recordId) return false;
+    if (!recordId) return false;
     try {
-      const rec = await contract.getRecord(recordId);
-      if (rec && rec.exists) {
-        return true;
+      if (contract) {
+        try {
+          const rec = await contract.getRecord(recordId);
+          if (rec && rec.exists) {
+            return true;
+          }
+        } catch (readErr) {
+          console.warn(`[Web3Context] getRecord check for ${recordId}:`, readErr.message);
+        }
       }
 
-      console.log(`[Web3Context] Auto-anchoring record ${recordId} to blockchain...`);
+      console.log(`[Web3Context] Record ${recordId} not found on-chain. Anchoring via TxQueue...`);
       const hash = fallbackFileHash || ethers.keccak256(ethers.toUtf8Bytes(recordId));
       const cat = fallbackCategory || 'General Record';
-      const tx = await contract.addRecord(recordId, hash, cat);
-      await tx.wait();
+
+      // Anchor through executeTx so it joins the queue and gets live on-chain nonce!
+      await executeTx(async (safeContract) => {
+        return await safeContract.addRecord(recordId, hash, cat);
+      });
       console.log(`[Web3Context] Record ${recordId} anchored successfully on-chain!`);
       return true;
     } catch (e) {

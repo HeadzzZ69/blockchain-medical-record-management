@@ -6,7 +6,7 @@ import { FileText, Download, Search, ShieldCheck, Lock, AlertCircle } from 'luci
 import { Toast } from '../../components/Modal';
 
 export default function PatientRecords() {
-  const { account, contract } = useWeb3();
+  const { account, contract, executeTx, isTxPending } = useWeb3();
   const [searchParams] = useSearchParams();
   const initialPatient = searchParams.get('patient') || '';
 
@@ -57,10 +57,11 @@ export default function PatientRecords() {
       });
 
       // Optionally call contract.logRecordAccess to emit RecordAccessed event on-chain
-      if (contract) {
+      if (contract && executeTx) {
         try {
-          const tx = await contract.logRecordAccess(record.patientWallet, record.recordId);
-          await tx.wait();
+          await executeTx(async (c) => {
+            return await c.logRecordAccess(record.patientWallet, record.recordId);
+          });
         } catch (logErr) {
           console.warn('On-chain access log skipped:', logErr.message);
         }

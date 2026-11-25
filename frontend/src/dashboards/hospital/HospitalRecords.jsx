@@ -5,7 +5,7 @@ import { FileText, Download, Search, ShieldCheck } from 'lucide-react';
 import { Toast } from '../../components/Modal';
 
 export default function HospitalRecords() {
-  const { account, contract } = useWeb3();
+  const { account, contract, executeTx, isTxPending } = useWeb3();
   const [patientWallet, setPatientWallet] = useState('');
   const [records, setRecords] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -42,10 +42,11 @@ export default function HospitalRecords() {
         responseType: 'blob',
       });
 
-      if (contract) {
+      if (contract && executeTx) {
         try {
-          const tx = await contract.logRecordAccess(record.patientWallet, record.recordId);
-          await tx.wait();
+          await executeTx(async (c) => {
+            return await c.logRecordAccess(record.patientWallet, record.recordId);
+          });
         } catch (logErr) {
           console.warn('On-chain access log skipped:', logErr.message);
         }
