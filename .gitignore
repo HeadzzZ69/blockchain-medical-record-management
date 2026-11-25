@@ -1,0 +1,83 @@
+# ==========================================
+# MedVault - Git Ignore Configuration
+# ==========================================
+
+# Dependencies
+node_modules/
+*/node_modules/
+.pnp
+.pnp.js
+
+# Environment variables & Sensitive Credentials
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+!.env.example
+!*/.env.example
+*.pem
+*.key
+*.pkcs12
+*.pfx
+*.p12
+*.seed
+*keystore*
+id_rsa*
+secrets.json
+
+# Hardhat & Smart Contract Artifacts & Cache
+artifacts/
+*/artifacts/
+cache/
+*/cache/
+typechain/
+typechain-types/
+
+# Production Builds & Bundler outputs
+dist/
+*/dist/
+build/
+*/build/
+out/
+.vite/
+
+# Test Coverage & NYC outputs
+coverage/
+*/coverage/
+.nyc_output/
+*.lcov
+
+# Off-chain Encrypted Medical Files & Patient Documents
+uploads/
+*/uploads/
+backend/uploads/*
+!backend/uploads/.gitkeep
+*.enc
+
+# Local Databases, Dumps & Caches
+*.sqlite
+*.sqlite3
+*.db
+dump/
+*.dump
+.mongo-memory-server/
+
+# Logs & Debug Output
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Operating System & Editor Artifacts
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
