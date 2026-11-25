@@ -178,7 +178,7 @@ export default function ConnectWalletPage() {
                   onClick={() => navigateToRoleDashboard(userRole)}
                   className="w-full py-3 px-4 rounded-xl bg-medical-600 hover:bg-medical-700 text-white font-semibold text-sm shadow-md transition flex items-center justify-center gap-2"
                 >
-                  Enter {userRole.charAt(0).toUpperCase() + userRole.slice(1)} Dashboard{' '}
+                  Enter {userRole ? (userRole.charAt(0).toUpperCase() + userRole.slice(1)) : 'Role'} Dashboard{' '}
                   <ArrowRight className="w-4 h-4" />
                 </button>
               )}

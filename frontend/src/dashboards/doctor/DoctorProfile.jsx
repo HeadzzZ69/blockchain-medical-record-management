@@ -4,6 +4,17 @@ import api from '../../services/api';
 import { Stethoscope, CheckCircle, Wallet, ShieldCheck } from 'lucide-react';
 import { Toast } from '../../components/Modal';
 
+const getInitials = (name, fallback = 'DR') => {
+  if (typeof name !== 'string' || !name.trim()) {
+    return fallback;
+  }
+  const clean = name.replace(/^Dr\.\s*/i, '').trim();
+  const parts = (clean || name).trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return fallback;
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+};
+
 export default function DoctorProfile() {
   const { account, userProfile, fetchMe, contractAddress } = useWeb3();
   const [name, setName] = useState('');
@@ -54,8 +65,8 @@ export default function DoctorProfile() {
 
       <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm space-y-6">
         <div className="flex items-center gap-4 pb-6 border-b border-slate-100">
-          <div className="w-16 h-16 rounded-2xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold text-2xl border border-sky-200">
-            <Stethoscope className="w-8 h-8" />
+          <div className="w-16 h-16 rounded-2xl bg-sky-100 text-sky-700 flex items-center justify-center font-bold text-xl border border-sky-200 shrink-0">
+            {getInitials(name || 'Physician', 'DR')}
           </div>
           <div>
             <h3 className="text-lg font-bold text-slate-900">Dr. {name || 'Physician'}</h3>

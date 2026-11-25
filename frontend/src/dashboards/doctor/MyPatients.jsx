@@ -4,6 +4,16 @@ import { useWeb3 } from '../../context/Web3Context';
 import api from '../../services/api';
 import { Users, FileText, ArrowRight, Search, ShieldCheck, RotateCcw, AlertCircle, Copy, Check } from 'lucide-react';
 
+const getInitials = (name, fallback = 'PT') => {
+  if (typeof name !== 'string' || !name.trim()) {
+    return fallback;
+  }
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return fallback;
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+};
+
 export default function MyPatients() {
   const { account } = useWeb3();
   const [patients, setPatients] = useState([]);
@@ -190,9 +200,9 @@ export default function MyPatients() {
                     <td className="px-6 py-4 font-semibold text-slate-900">
                       <div className="flex items-center gap-2.5">
                         <div className="w-7 h-7 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center font-bold text-xs shrink-0">
-                          {p.name?.charAt(0) || 'P'}
+                          {getInitials(p?.name, 'PT')}
                         </div>
-                        <span>{p.name}</span>
+                        <span>{p?.name || 'Registered Patient'}</span>
                       </div>
                     </td>
                     <td className="px-6 py-4 font-mono text-slate-600">

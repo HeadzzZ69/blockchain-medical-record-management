@@ -16,6 +16,20 @@ import {
 } from 'lucide-react';
 import { useWeb3 } from '../context/Web3Context';
 
+const getInitials = (name, role = 'user') => {
+  if (typeof name !== 'string' || !name.trim()) {
+    if (role === 'doctor') return 'DR';
+    if (role === 'hospital') return 'H';
+    if (role === 'admin') return 'AD';
+    return 'PT';
+  }
+  const clean = name.replace(/^Dr\.\s*/i, '').trim();
+  const parts = (clean || name).trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'U';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+};
+
 export default function Sidebar({ role }) {
   const { userProfile, account } = useWeb3();
 
@@ -76,11 +90,11 @@ export default function Sidebar({ role }) {
       <div className="p-5 border-b border-slate-800">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-medical-400 font-bold border border-slate-700">
-            {userProfile?.name ? userProfile.name.charAt(0).toUpperCase() : 'U'}
+            {getInitials(userProfile?.name, role)}
           </div>
           <div className="overflow-hidden">
             <h4 className="text-sm font-semibold text-white truncate">
-              {userProfile?.name || 'Authorized User'}
+              {userProfile?.name || (role === 'doctor' ? 'Dr. Physician' : 'Authorized User')}
             </h4>
             <span className="text-xs uppercase tracking-wider text-medical-400 font-medium">
               {role}

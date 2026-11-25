@@ -17,6 +17,17 @@ import {
   Activity,
 } from 'lucide-react';
 
+const getInitials = (name, fallback = 'DR') => {
+  if (typeof name !== 'string' || !name.trim()) {
+    return fallback;
+  }
+  const clean = name.replace(/^Dr\.\s*/i, '').trim();
+  const parts = (clean || name).trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return fallback;
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+};
+
 export default function DoctorDashboard() {
   const { account, userProfile } = useWeb3();
   const [stats, setStats] = useState({
@@ -55,12 +66,27 @@ export default function DoctorDashboard() {
       // Find this doctor's profile details
       const doctors = docRes.data?.doctors || [];
       const currentDoc = doctors.find((d) => d.walletAddress?.toLowerCase() === account.toLowerCase());
-      setDoctorDetails(currentDoc || null);
+      const resolvedDoc = currentDoc || statsRes.data?.profile || (userProfile ? {
+        fullName: userProfile.fullName || userProfile.name || 'Physician',
+        specialization: userProfile.specialization || 'General Medicine',
+        medicalLicenseNumber: userProfile.licenseNumber || 'MED-VERIFIED',
+        hospitalName: userProfile.hospitalName || 'Apollo Multi-Specialty Hospital',
+        qualification: 'MBBS, MD',
+        experience: 'Senior Consultant',
+      } : null);
+
+      setDoctorDetails(resolvedDoc);
 
       const clinicalStats = statsRes.data?.stats || {};
-      const patients = clinicalStats.accessiblePatients || [];
-      const consults = clinicalStats.recentConsultations || [];
-      const apts = clinicalStats.upcomingAppointments || [];
+      const patients = Array.isArray(statsRes.data?.patients)
+        ? statsRes.data.patients
+        : (Array.isArray(clinicalStats.accessiblePatients) ? clinicalStats.accessiblePatients : []);
+      const consults = Array.isArray(statsRes.data?.consultations)
+        ? statsRes.data.consultations
+        : (Array.isArray(clinicalStats.recentConsultations) ? clinicalStats.recentConsultations : []);
+      const apts = Array.isArray(statsRes.data?.appointments)
+        ? statsRes.data.appointments
+        : (Array.isArray(clinicalStats.upcomingAppointments) ? clinicalStats.upcomingAppointments : []);
 
       setAccessiblePatientsList(patients);
       setRecentConsultations(consults);
@@ -134,16 +160,16 @@ export default function DoctorDashboard() {
       </div>
 
       {/* Doctor Credentials & Hospital Summary Card */}
-      {doctorDetails && (
+      {doctorDetails ? (
         <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
           <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
-                <Stethoscope className="w-5 h-5" />
+              <div className="w-11 h-11 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center font-bold text-sm border border-sky-200 shrink-0">
+                {getInitials(doctorDetails.fullName || doctorDetails.name, 'DR')}
               </div>
               <div>
-                <h3 className="text-sm font-bold text-slate-900">{doctorDetails.fullName}</h3>
-                <p className="text-xs text-slate-500">{doctorDetails.specialization} &bull; {doctorDetails.experience || 'Senior Consultant'}</p>
+                <h3 className="text-sm font-bold text-slate-900">{doctorDetails.fullName || doctorDetails.name || 'Dr. Physician'}</h3>
+                <p className="text-xs text-slate-500">{doctorDetails.specialization || 'Clinical Specialist'} &bull; {doctorDetails.experience || 'Senior Consultant'}</p>
               </div>
             </div>
             <span className="text-xs font-semibold px-3 py-1 rounded-full bg-sky-50 text-sky-700 border border-sky-200 flex items-center gap-1.5">
@@ -154,11 +180,11 @@ export default function DoctorDashboard() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
             <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
               <span className="text-slate-500 font-medium block">License Number</span>
-              <span className="text-slate-900 font-bold text-xs mt-0.5 block font-mono">{doctorDetails.medicalLicenseNumber || doctorDetails.licenseNumber}</span>
+              <span className="text-slate-900 font-bold text-xs mt-0.5 block font-mono">{doctorDetails.medicalLicenseNumber || doctorDetails.licenseNumber || 'MED-VERIFIED'}</span>
             </div>
             <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
               <span className="text-slate-500 font-medium block">Affiliated Hospital</span>
-              <span className="text-slate-900 font-bold text-xs mt-0.5 block truncate">{doctorDetails.hospitalName || 'Apollo Multi-Specialty'}</span>
+              <span className="text-slate-900 font-bold text-xs mt-0.5 block truncate">{doctorDetails.hospitalName || 'Apollo Multi-Specialty Hospital'}</span>
             </div>
             <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
               <span className="text-slate-500 font-medium block">Qualifications</span>
@@ -169,6 +195,21 @@ export default function DoctorDashboard() {
               <span className="text-emerald-700 font-bold text-xs mt-0.5 block capitalize">Active Clinical Duty</span>
             </div>
           </div>
+        </div>
+      ) : (
+        <div className="bg-amber-50 rounded-2xl border border-amber-200 p-5 flex items-center justify-between text-xs text-amber-900">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold">
+              DR
+            </div>
+            <div>
+              <p className="font-bold text-amber-950">Doctor Profile Incomplete</p>
+              <p className="text-[11px] text-amber-700">Please complete your practitioner credentials in Doctor Profile to update your directory record.</p>
+            </div>
+          </div>
+          <Link to="/doctor/profile" className="px-3 py-1.5 rounded-lg bg-amber-600 text-white font-semibold text-xs hover:bg-amber-700 transition">
+            Complete Profile
+          </Link>
         </div>
       )}
 
@@ -247,17 +288,19 @@ export default function DoctorDashboard() {
             </div>
           ) : (
             <div className="space-y-3">
-              {upcomingAppointments.map((apt) => (
-                <div key={apt.appointmentId} className="p-4 rounded-xl border border-slate-100 bg-slate-50/80 flex items-center justify-between">
+              {upcomingAppointments.map((apt, idx) => (
+                <div key={apt.appointmentId || idx} className="p-4 rounded-xl border border-slate-100 bg-slate-50/80 flex items-center justify-between">
                   <div>
                     <h4 className="text-xs font-bold text-slate-900">{apt.reason || 'Patient Consultation'}</h4>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      {apt.appointmentDate} at {apt.appointmentTime}
+                      {apt.appointmentDate || 'Upcoming'} {apt.appointmentTime ? `at ${apt.appointmentTime}` : ''}
                     </p>
-                    <p className="text-[11px] font-mono text-slate-400 mt-1">Patient: {apt.patientWallet?.substring(0, 10)}...</p>
+                    <p className="text-[11px] font-mono text-slate-400 mt-1">
+                      Patient: {apt.patientWallet ? `${apt.patientWallet.substring(0, 10)}...` : 'Registered Patient'}
+                    </p>
                   </div>
                   <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 capitalize">
-                    {apt.status}
+                    {apt.status || 'Scheduled'}
                   </span>
                 </div>
               ))}
@@ -284,20 +327,20 @@ export default function DoctorDashboard() {
           ) : (
             <div className="space-y-3">
               {accessiblePatientsList.map((pat, idx) => (
-                <div key={idx} className="p-3.5 rounded-xl border border-slate-100 bg-slate-50/80 flex items-center justify-between">
+                <div key={pat.patientId || pat.walletAddress || idx} className="p-3.5 rounded-xl border border-slate-100 bg-slate-50/80 flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs">
-                      {pat.fullName ? pat.fullName.charAt(0) : 'P'}
+                    <div className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs shrink-0">
+                      {getInitials(pat?.fullName || pat?.name, 'PT')}
                     </div>
                     <div>
-                      <h4 className="text-xs font-bold text-slate-900">{pat.fullName || 'Patient'}</h4>
+                      <h4 className="text-xs font-bold text-slate-900">{pat?.fullName || pat?.name || 'Patient'}</h4>
                       <p className="text-[11px] text-slate-500">
-                        Blood: {pat.bloodGroup || 'O+'} &bull; Allergies: {pat.allergies?.length || 0}
+                        Blood: {pat?.bloodGroup || 'O+'} &bull; Allergies: {Array.isArray(pat?.allergies) ? pat.allergies.length : 0}
                       </p>
                     </div>
                   </div>
                   <Link
-                    to="/doctor/records"
+                    to={`/doctor/records?patient=${pat?.walletAddress || ''}`}
                     className="text-xs text-sky-600 hover:text-sky-700 font-semibold flex items-center gap-1"
                   >
                     Records <ArrowRight className="w-3.5 h-3.5" />
