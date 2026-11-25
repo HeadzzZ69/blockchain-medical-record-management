@@ -1,6 +1,6 @@
 const assert = require("assert");
 require("dotenv").config();
-const { connectDB } = require("../src/config/db");
+const { connectDB, disconnectDB } = require("../src/config/db");
 const {
   User,
   Patient,
@@ -83,6 +83,7 @@ async function runUsersTest() {
   console.log("\n==================================================");
   console.log("ALL USER DIRECTORY & MODEL TESTS PASSED!");
   console.log("==================================================");
+  await disconnectDB();
   process.exit(0);
 }
 

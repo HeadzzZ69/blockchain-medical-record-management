@@ -6,7 +6,7 @@ import { Stethoscope, CheckCircle, AlertCircle } from 'lucide-react';
 import { Toast } from '../../components/Modal';
 
 export default function RegisterDoctor() {
-  const { contract } = useWeb3();
+  const { contract, executeTx, isTxPending } = useWeb3();
   const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
@@ -30,9 +30,9 @@ export default function RegisterDoctor() {
       setToast({ message: '1/2 Prompting MetaMask to register Doctor on smart contract...', type: 'info' });
 
       // Call Smart Contract: registerDoctor(address, name)
-      const tx = await contract.registerDoctor(formData.walletAddress.trim(), formData.name.trim());
-      setToast({ message: 'Waiting for blockchain transaction confirmation...', type: 'info' });
-      await tx.wait();
+      await executeTx(async (c) => {
+        return await c.registerDoctor(formData.walletAddress.trim(), formData.name.trim());
+      });
 
       setToast({ message: '2/2 Saving doctor record in database...', type: 'info' });
 
@@ -124,11 +124,11 @@ export default function RegisterDoctor() {
 
           <button
             type="submit"
-            disabled={isLoading}
+            disabled={isLoading || isTxPending}
             className="w-full mt-4 py-3 px-4 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2"
           >
             <Stethoscope className="w-4 h-4" />
-            {isLoading ? 'Authorizing on Blockchain...' : 'Register Doctor on Blockchain'}
+            {isLoading || isTxPending ? 'Authorizing on Blockchain...' : 'Register Doctor on Blockchain'}
           </button>
         </form>
       </div>

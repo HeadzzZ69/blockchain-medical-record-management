@@ -5,7 +5,7 @@ import { Inbox, CheckCircle2, XCircle, Clock, ShieldCheck, Stethoscope } from 'l
 import { Toast } from '../../components/Modal';
 
 export default function AccessRequests() {
-  const { account, contract } = useWeb3();
+  const { account, contract, executeTx, ensureRecordAnchored, isTxPending } = useWeb3();
   const [requests, setRequests] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [processingId, setProcessingId] = useState(null);
@@ -42,9 +42,12 @@ export default function AccessRequests() {
 
       let lastTxHash = '';
       for (const recId of req.recordIds) {
-        const tx = await contract.grantAccess(req.requesterWallet, recId, expiry);
-        const receipt = await tx.wait();
-        lastTxHash = receipt.hash;
+        // Guarantee record exists on-chain to prevent 'Record does not exist' revert
+        await ensureRecordAnchored(recId);
+        const receipt = await executeTx(async (c) => {
+          return await c.grantAccess(req.requesterWallet, recId, expiry);
+        });
+        lastTxHash = receipt?.hash || '';
       }
 
       // Update backend status to approved
@@ -57,7 +60,7 @@ export default function AccessRequests() {
       await fetchRequests();
     } catch (err) {
       console.error('Approval error:', err);
-      setToast({ message: err.reason || err.message || 'Failed to approve request', type: 'error' });
+      setToast({ message: err.message || err.reason || 'Failed to approve request', type: 'error' });
     } finally {
       setProcessingId(null);
     }
@@ -139,14 +142,14 @@ export default function AccessRequests() {
                   <div className="flex items-center gap-2 shrink-0">
                     <button
                       onClick={() => handleApprove(r)}
-                      disabled={processingId === r._id}
+                      disabled={processingId === r._id || isTxPending}
                       className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm transition flex items-center gap-1.5 disabled:opacity-50"
                     >
                       <CheckCircle2 className="w-4 h-4" /> Approve on Chain
                     </button>
                     <button
                       onClick={() => handleReject(r)}
-                      disabled={processingId === r._id}
+                      disabled={processingId === r._id || isTxPending}
                       className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 font-semibold text-xs transition flex items-center gap-1.5 disabled:opacity-50"
                     >
                       <XCircle className="w-4 h-4" /> Reject

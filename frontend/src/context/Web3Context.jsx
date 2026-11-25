@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import { ethers } from 'ethers';
 import api from '../services/api';
 import contractInfoFallback from '../contracts/contractInfo.json';
+import NonceAlertModal from '../components/NonceAlertModal';
 
 const Web3Context = createContext();
 
@@ -18,11 +19,17 @@ export const Web3Provider = ({ children }) => {
   const [userProfile, setUserProfile] = useState(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isWrongNetwork, setIsWrongNetwork] = useState(false);
+  const [contractNotDeployed, setContractNotDeployed] = useState(false);
   const [authToken, setAuthToken] = useState(localStorage.getItem('emr_token'));
 
-  // Ref to track current account and prevent race conditions or stale closures
+  // Transaction execution state & locks
+  const [isTxPending, setIsTxPending] = useState(false);
+  const [txProgress, setTxProgress] = useState({ status: 'idle', message: '' });
+  const [nonceModalState, setNonceModalState] = useState({ isOpen: false, details: '' });
+
+  // Refs to track current account and prevent race conditions or duplicate submissions
   const currentAccountRef = useRef(null);
-  const isSwitchingRef = useRef(false);
+  const isTxLockedRef = useRef(false);
 
   /**
    * Helper to update URL location without hard page reload
@@ -35,8 +42,22 @@ export const Web3Provider = ({ children }) => {
   }, []);
 
   /**
+   * Verify contract bytecode exists on local chain
+   */
+  const verifyContractDeployment = async (browserProvider, contractAddress) => {
+    try {
+      const code = await browserProvider.getCode(contractAddress);
+      const isDeployed = code && code !== '0x' && code !== '0x0';
+      setContractNotDeployed(!isDeployed);
+      return isDeployed;
+    } catch (e) {
+      console.warn('Could not verify contract deployment code:', e.message);
+      return false;
+    }
+  };
+
+  /**
    * Map role enum index from Solidity contract to string
-   * Enum Role: 0: NONE, 1: PATIENT, 2: DOCTOR, 3: HOSPITAL, 4: ADMIN
    */
   const getRoleFromContract = async (contractInstance, walletAddr) => {
     if (!contractInstance || !walletAddr) return 'none';
@@ -50,7 +71,7 @@ export const Web3Provider = ({ children }) => {
           return 'admin';
         }
       } catch (adminErr) {
-        // contract may not be deployed yet or admin call failed
+        // contract call failed or contract not deployed
       }
 
       // 2. Query getUser(walletAddr)
@@ -76,12 +97,15 @@ export const Web3Provider = ({ children }) => {
       try {
         setIsConnecting(true);
 
-        // 1. Verify / bind signer specifically to cleanAddr
+        // 1. Verify contract bytecode exists on chain
+        await verifyContractDeployment(browserProvider, contractInfoFallback.contractAddress);
+
+        // 2. Verify / bind signer specifically to cleanAddr
         const userSigner = await browserProvider.getSigner(cleanAddr);
         setSigner(userSigner);
         setAccount(cleanAddr);
 
-        // 2. Re-create contract instance connected to this new signer
+        // 3. Re-create contract instance connected to this new signer
         const contractInstance = new ethers.Contract(
           contractInfoFallback.contractAddress,
           contractInfoFallback.abi,
@@ -89,11 +113,11 @@ export const Web3Provider = ({ children }) => {
         );
         setContract(contractInstance);
 
-        // 3. Authoritative role check directly from smart contract
+        // 4. Authoritative role check directly from smart contract
         const role = await getRoleFromContract(contractInstance, cleanAddr);
         setUserRole(role);
 
-        // 4. Synchronize session with backend API for this specific wallet
+        // 5. Synchronize session with backend API for this specific wallet
         try {
           const { data: sessionData } = await api.post('/auth/session', {
             walletAddress: cleanAddr,
@@ -109,7 +133,6 @@ export const Web3Provider = ({ children }) => {
           }
         } catch (apiErr) {
           console.warn('Web3Context: Backend session sync warning:', apiErr.message);
-          // Fallback user profile if backend is not responsive
           setUserProfile({
             walletAddress: cleanAddr,
             name: role === 'admin' ? 'System Administrator' : `User ${cleanAddr.slice(0, 6)}`,
@@ -118,7 +141,7 @@ export const Web3Provider = ({ children }) => {
           });
         }
 
-        // 5. Route user to their corresponding dashboard if requested
+        // 6. Route user to their corresponding dashboard if requested
         if (shouldRedirect) {
           const currentPath = window.location.pathname;
           let targetPath = '/connect';
@@ -129,7 +152,6 @@ export const Web3Provider = ({ children }) => {
           else if (role === 'patient') targetPath = '/patient';
           else if (role === 'none') targetPath = '/register';
 
-          // If currently on /connect or any dashboard path, navigate to targetPath
           if (
             currentPath === '/connect' ||
             currentPath === '/' ||
@@ -222,12 +244,10 @@ export const Web3Provider = ({ children }) => {
       const browserProvider = new ethers.BrowserProvider(window.ethereum);
       setProvider(browserProvider);
 
-      // Verify chain
       const network = await browserProvider.getNetwork();
       const isCorrectChain = network.chainId === HARDHAT_CHAIN_ID_DEC || network.chainId === 1337n;
       setIsWrongNetwork(!isCorrectChain);
 
-      // Request accounts through EIP-1193
       const accounts = await window.ethereum.request({
         method: 'eth_requestAccounts',
       });
@@ -248,7 +268,6 @@ export const Web3Provider = ({ children }) => {
 
   /**
    * Explicit Switch Account modal through wallet_requestPermissions
-   * Forces MetaMask to show the account picker so the user can select Account #0, #1, #2, #3
    */
   const switchAccount = async () => {
     if (!window.ethereum) {
@@ -258,8 +277,6 @@ export const Web3Provider = ({ children }) => {
 
     try {
       setIsConnecting(true);
-
-      // Request permission prompt to select/switch active account
       try {
         await window.ethereum.request({
           method: 'wallet_requestPermissions',
@@ -269,7 +286,6 @@ export const Web3Provider = ({ children }) => {
         console.warn('wallet_requestPermissions dismissed or rejected:', permErr.message);
       }
 
-      // Query the currently active account after switch
       const accounts = await window.ethereum.request({
         method: 'eth_accounts',
       });
@@ -292,6 +308,123 @@ export const Web3Provider = ({ children }) => {
   };
 
   /**
+   * SAFE TRANSACTION EXECUTOR:
+   * - Prevents duplicate concurrent transaction calls (mutex lock).
+   * - Checks network and contract existence.
+   * - Intercepts MetaMask Nonce too high / Nonce mismatch errors and surfaces solution.
+   * - Intercepts "Record does not exist" and user rejection.
+   */
+  const executeTx = async (txFn, progressCallback) => {
+    if (isTxLockedRef.current) {
+      const lockError = new Error('Another transaction is currently in progress. Please wait for it to complete.');
+      lockError.userFriendly = true;
+      throw lockError;
+    }
+
+    if (!contract || !signer || !account) {
+      throw new Error('Wallet or smart contract not initialized. Please connect your MetaMask wallet.');
+    }
+
+    if (isWrongNetwork) {
+      await switchNetwork();
+    }
+
+    try {
+      isTxLockedRef.current = true;
+      setIsTxPending(true);
+      setTxProgress({ status: 'waiting', message: 'Prompting MetaMask for signature...' });
+      if (progressCallback) progressCallback('Waiting for MetaMask signature...');
+
+      const txResult = await txFn(contract, signer, provider);
+
+      if (txResult && typeof txResult.wait === 'function') {
+        setTxProgress({ status: 'confirming', message: 'Transaction submitted. Waiting for block confirmation...' });
+        if (progressCallback) progressCallback('Waiting for block confirmation on Hardhat node...');
+
+        const receipt = await txResult.wait();
+        setTxProgress({ status: 'success', message: 'Transaction confirmed successfully on blockchain!' });
+        if (progressCallback) progressCallback('Transaction confirmed!');
+        return receipt;
+      }
+
+      setTxProgress({ status: 'success', message: 'Action completed successfully!' });
+      return txResult;
+    } catch (err) {
+      console.error('[Web3Context] executeTx error:', err);
+      const errMsg = (err.message || '').toLowerCase();
+      const errReason = (err.reason || '').toLowerCase();
+      const errDataMsg = (err.data?.message || '').toLowerCase();
+      const fullErrStr = `${errMsg} ${errReason} ${errDataMsg}`;
+
+      // 1. Detect Nonce desynchronization error
+      if (
+        fullErrStr.includes('nonce too high') ||
+        fullErrStr.includes('expected nonce') ||
+        fullErrStr.includes('nonce') && fullErrStr.includes('automining') ||
+        err.code === -32603 && fullErrStr.includes('nonce')
+      ) {
+        const errorDetail = err.data?.message || err.message || 'Nonce too high. Expected nonce to be 1 but got 3.';
+        setNonceModalState({ isOpen: true, details: errorDetail });
+        const friendlyNonceErr = new Error(
+          'MetaMask Nonce Desynchronized: Local blockchain restarted. Please open MetaMask -> Settings -> Advanced -> click "Clear activity tab data" (Reset account).'
+        );
+        friendlyNonceErr.userFriendly = true;
+        setTxProgress({ status: 'error', message: friendlyNonceErr.message });
+        throw friendlyNonceErr;
+      }
+
+      // 2. Detect Record does not exist
+      if (fullErrStr.includes('record does not exist')) {
+        const friendlyRecordErr = new Error(
+          'Record does not exist on blockchain: This record reference has not been anchored to the smart contract yet.'
+        );
+        friendlyRecordErr.userFriendly = true;
+        setTxProgress({ status: 'error', message: friendlyRecordErr.message });
+        throw friendlyRecordErr;
+      }
+
+      // 3. Detect User rejection
+      if (err.code === 4001 || fullErrStr.includes('user rejected') || fullErrStr.includes('action_rejected')) {
+        const cancelErr = new Error('Transaction was cancelled in MetaMask.');
+        cancelErr.userFriendly = true;
+        setTxProgress({ status: 'error', message: cancelErr.message });
+        throw cancelErr;
+      }
+
+      setTxProgress({ status: 'error', message: err.reason || err.message || 'Transaction failed.' });
+      throw err;
+    } finally {
+      isTxLockedRef.current = false;
+      setIsTxPending(false);
+    }
+  };
+
+  /**
+   * Helper: Ensure a medical record exists on the smart contract before granting/revoking access.
+   * If it doesn't exist on-chain yet, anchors it automatically using contract.addRecord!
+   */
+  const ensureRecordAnchored = async (recordId, fallbackFileHash, fallbackCategory) => {
+    if (!contract || !recordId) return false;
+    try {
+      const rec = await contract.getRecord(recordId);
+      if (rec && rec.exists) {
+        return true;
+      }
+
+      console.log(`[Web3Context] Auto-anchoring record ${recordId} to blockchain...`);
+      const hash = fallbackFileHash || ethers.keccak256(ethers.toUtf8Bytes(recordId));
+      const cat = fallbackCategory || 'General Record';
+      const tx = await contract.addRecord(recordId, hash, cat);
+      await tx.wait();
+      console.log(`[Web3Context] Record ${recordId} anchored successfully on-chain!`);
+      return true;
+    } catch (e) {
+      console.warn(`[Web3Context] Auto-anchor check error for ${recordId}:`, e.message);
+      return false;
+    }
+  };
+
+  /**
    * Refresh current user profile from backend
    */
   const fetchMe = async () => {
@@ -300,7 +433,6 @@ export const Web3Provider = ({ children }) => {
       if (!token) return;
       const { data } = await api.get('/auth/me');
       if (data && data.user) {
-        // Only set profile if it matches currently selected account
         if (
           !currentAccountRef.current ||
           data.user.walletAddress.toLowerCase() === currentAccountRef.current.toLowerCase()
@@ -334,7 +466,6 @@ export const Web3Provider = ({ children }) => {
         if (!isMounted) return;
         setIsWrongNetwork(network.chainId !== HARDHAT_CHAIN_ID_DEC && network.chainId !== 1337n);
 
-        // Check if MetaMask already has authorized accounts
         const accounts = await window.ethereum.request({ method: 'eth_accounts' });
         if (accounts && accounts.length > 0 && isMounted) {
           await resolveAccount(accounts[0], browserProvider, false);
@@ -346,26 +477,21 @@ export const Web3Provider = ({ children }) => {
 
     initOnLoad();
 
-    // MetaMask Event Listeners
     if (window.ethereum) {
-      // 1. Listen for Account Changes in MetaMask
       const handleAccountsChanged = async (accounts) => {
         console.log('Web3Context: accountsChanged event detected:', accounts);
 
         if (!accounts || accounts.length === 0) {
-          // User locked MetaMask or disconnected all accounts
           logout();
           return;
         }
 
         const newAccount = accounts[0].toLowerCase();
 
-        // If the account is indeed different
         if (newAccount !== currentAccountRef.current) {
           console.log(`Web3Context: Switching active wallet: ${currentAccountRef.current} -> ${newAccount}`);
           currentAccountRef.current = newAccount;
 
-          // Clear previous user's credentials immediately
           localStorage.removeItem('emr_token');
           setAuthToken(null);
           setUserProfile(null);
@@ -374,12 +500,10 @@ export const Web3Provider = ({ children }) => {
           const browserProvider = new ethers.BrowserProvider(window.ethereum);
           setProvider(browserProvider);
 
-          // Resolve new account and immediately redirect to its role dashboard
           await resolveAccount(newAccount, browserProvider, true);
         }
       };
 
-      // 2. Listen for Chain Changes in MetaMask
       const handleChainChanged = (chainId) => {
         console.log('Web3Context: chainChanged event detected:', chainId);
         const isLocal = chainId === HARDHAT_CHAIN_ID_HEX || Number(chainId) === 31337 || Number(chainId) === 1337;
@@ -417,16 +541,28 @@ export const Web3Provider = ({ children }) => {
         setUserProfile,
         isConnecting,
         isWrongNetwork,
+        contractNotDeployed,
         authToken,
+        isTxPending,
+        txProgress,
         connectWallet,
         switchAccount,
         switchNetwork,
+        executeTx,
+        ensureRecordAnchored,
         logout,
         fetchMe,
         contractAddress: contractInfoFallback.contractAddress,
+        openNonceModal: (details) => setNonceModalState({ isOpen: true, details }),
+        closeNonceModal: () => setNonceModalState({ isOpen: false, details: '' }),
       }}
     >
       {children}
+      <NonceAlertModal
+        isOpen={nonceModalState.isOpen}
+        details={nonceModalState.details}
+        onClose={() => setNonceModalState({ isOpen: false, details: '' })}
+      />
     </Web3Context.Provider>
   );
 };

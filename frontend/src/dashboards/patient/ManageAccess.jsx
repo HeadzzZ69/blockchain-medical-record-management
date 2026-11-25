@@ -15,7 +15,7 @@ import {
 import { Toast } from '../../components/Modal';
 
 export default function ManageAccess() {
-  const { account, contract } = useWeb3();
+  const { account, contract, executeTx, ensureRecordAnchored, isTxPending } = useWeb3();
 
   const [doctors, setDoctors] = useState([]);
   const [hospitals, setHospitals] = useState([]);
@@ -77,7 +77,11 @@ export default function ManageAccess() {
 
     try {
       setIsGranting(true);
-      setToast({ message: 'Prompting MetaMask for transaction signature...', type: 'info' });
+
+      // Pre-anchor record to blockchain if needed to prevent "Record does not exist" revert
+      const recordObj = records.find((r) => r.recordId === selectedRecordId);
+      setToast({ message: 'Verifying record status on smart contract...', type: 'info' });
+      await ensureRecordAnchored(selectedRecordId, recordObj?.fileHash, recordObj?.category);
 
       // Calculate expiry timestamp
       let expiryTimestamp = 0;
@@ -86,16 +90,17 @@ export default function ManageAccess() {
         expiryTimestamp = Math.floor(Date.now() / 1000) + days * 24 * 60 * 60;
       }
 
+      setToast({ message: 'Prompting MetaMask for transaction signature...', type: 'info' });
       // Call Smart Contract: grantAccess(requester, recordId, expiryTimestamp)
-      const tx = await contract.grantAccess(selectedRequester, selectedRecordId, expiryTimestamp);
-      setToast({ message: 'Transaction submitted. Waiting for confirmation...', type: 'info' });
-      await tx.wait();
+      await executeTx(async (c) => {
+        return await c.grantAccess(selectedRequester, selectedRecordId, expiryTimestamp);
+      });
 
       setToast({ message: 'Access permission successfully granted on blockchain!', type: 'success' });
       loadData();
     } catch (err) {
       console.error('Grant access error:', err);
-      setToast({ message: err.reason || err.message || 'Failed to grant access', type: 'error' });
+      setToast({ message: err.message || err.reason || 'Failed to grant access', type: 'error' });
     } finally {
       setIsGranting(false);
     }
@@ -187,11 +192,11 @@ export default function ManageAccess() {
 
             <button
               type="submit"
-              disabled={isGranting || records.length === 0}
+              disabled={isGranting || isTxPending || records.length === 0}
               className="w-full mt-4 py-3 px-4 rounded-xl bg-medical-600 hover:bg-medical-700 text-white font-semibold text-xs shadow transition disabled:opacity-50 flex items-center justify-center gap-2"
             >
               <ShieldCheck className="w-4 h-4" />
-              {isGranting ? 'Signing Blockchain Tx...' : 'Grant Access in MetaMask'}
+              {isGranting || isTxPending ? 'Signing Blockchain Tx...' : 'Grant Access in MetaMask'}
             </button>
           </form>
         </div>

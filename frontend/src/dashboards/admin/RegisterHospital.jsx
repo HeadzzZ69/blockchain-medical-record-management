@@ -6,7 +6,7 @@ import { Building2, CheckCircle } from 'lucide-react';
 import { Toast } from '../../components/Modal';
 
 export default function RegisterHospital() {
-  const { contract } = useWeb3();
+  const { contract, executeTx, isTxPending } = useWeb3();
   const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
@@ -28,9 +28,9 @@ export default function RegisterHospital() {
       setToast({ message: '1/2 Prompting MetaMask to register Hospital on smart contract...', type: 'info' });
 
       // Call Smart Contract: registerHospital(address, name)
-      const tx = await contract.registerHospital(formData.walletAddress.trim(), formData.name.trim());
-      setToast({ message: 'Waiting for blockchain confirmation...', type: 'info' });
-      await tx.wait();
+      await executeTx(async (c) => {
+        return await c.registerHospital(formData.walletAddress.trim(), formData.name.trim());
+      });
 
       setToast({ message: '2/2 Storing institutional metadata in database...', type: 'info' });
       await api.post('/users/register', {
@@ -92,11 +92,11 @@ export default function RegisterHospital() {
 
           <button
             type="submit"
-            disabled={isLoading}
+            disabled={isLoading || isTxPending}
             className="w-full mt-4 py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2"
           >
             <Building2 className="w-4 h-4" />
-            {isLoading ? 'Authorizing on Blockchain...' : 'Register Hospital on Blockchain'}
+            {isLoading || isTxPending ? 'Authorizing on Blockchain...' : 'Register Hospital on Blockchain'}
           </button>
         </form>
       </div>

@@ -5,7 +5,7 @@ import { ShieldAlert, RotateCcw, AlertTriangle, CheckCircle, ExternalLink, UserX
 import { Toast } from '../../components/Modal';
 
 export default function RevokeAccess() {
-  const { account, contract } = useWeb3();
+  const { account, contract, executeTx, isTxPending } = useWeb3();
 
   const [activePermissions, setActivePermissions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -68,16 +68,16 @@ export default function RevokeAccess() {
       setIsRevoking(true);
       setToast({ message: 'Prompting MetaMask to revoke permission on blockchain...', type: 'info' });
 
-      // Call Smart Contract: revokeAccess(requester, recordId)
-      const tx = await contract.revokeAccess(perm.requester, perm.recordId);
-      setToast({ message: 'Revocation transaction sent. Waiting for confirmation...', type: 'info' });
-      await tx.wait();
+      // Call Smart Contract: revokeAccess(requester, recordId) via safe executor
+      await executeTx(async (c) => {
+        return await c.revokeAccess(perm.requester, perm.recordId);
+      });
 
       setToast({ message: 'Access successfully revoked on the smart contract!', type: 'success' });
       await fetchActivePermissions();
     } catch (err) {
       console.error('Revocation error:', err);
-      setToast({ message: err.reason || err.message || 'Failed to revoke access', type: 'error' });
+      setToast({ message: err.message || err.reason || 'Failed to revoke access', type: 'error' });
     } finally {
       setIsRevoking(false);
     }
@@ -138,7 +138,7 @@ export default function RevokeAccess() {
                     <td className="px-6 py-4 text-right">
                       <button
                         onClick={() => handleRevoke(perm)}
-                        disabled={isRevoking}
+                        disabled={isRevoking || isTxPending}
                         className="px-3 py-1.5 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 font-semibold text-xs flex items-center gap-1.5 ml-auto transition disabled:opacity-50"
                       >
                         <ShieldAlert className="w-3.5 h-3.5" /> Revoke Access

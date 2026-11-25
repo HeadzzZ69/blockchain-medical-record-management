@@ -5,7 +5,7 @@ const http = require("http");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
-const { connectDB } = require("../src/config/db");
+const { connectDB, disconnectDB } = require("../src/config/db");
 const { seedComprehensiveDemoData } = require("../src/utils/seedData");
 const { decryptBuffer, calculateSHA256 } = require("../src/utils/crypto");
 const { MedicalRecord, User, AccessRequest } = require("../src/models");
@@ -122,9 +122,9 @@ async function runUploadTests() {
     console.log("ALL MEDICAL RECORD UPLOAD & CRYPTO TESTS PASSED!");
     console.log("==================================================");
   } finally {
-    server.close(() => {
-      process.exit(0);
-    });
+    server.close();
+    await disconnectDB();
+    process.exit(0);
   }
 }
 

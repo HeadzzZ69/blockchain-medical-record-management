@@ -5,7 +5,7 @@ import api from '../../services/api';
 import { Upload, FileUp, CheckCircle, AlertCircle, Lock, ShieldCheck } from 'lucide-react';
 
 export default function UploadRecord() {
-  const { account, contract } = useWeb3();
+  const { account, contract, executeTx, isTxPending } = useWeb3();
   const navigate = useNavigate();
 
   const [file, setFile] = useState(null);
@@ -64,16 +64,18 @@ export default function UploadRecord() {
 
       // Step 2: Register on Solidity smart contract
       setStatusStep('Step 2/3: Prompting MetaMask to register cryptographic hash on the blockchain...');
-      const tx = await contract.addRecord(recordId, fileHash, category);
-
-      setStatusStep('Waiting for blockchain transaction confirmation on Hardhat node...');
-      const receipt = await tx.wait();
+      const receipt = await executeTx(
+        async (c) => {
+          return await c.addRecord(recordId, fileHash, category);
+        },
+        (progress) => setStatusStep(progress)
+      );
 
       // Step 3: Confirm transaction hash with backend
       setStatusStep('Step 3/3: Anchoring confirmation in backend database...');
       await api.post('/records/confirm', {
         recordId,
-        transactionHash: receipt.hash,
+        transactionHash: receipt?.hash || '',
       });
 
       setStatusStep('Upload & on-chain anchoring successful! Redirecting to records...');
@@ -188,11 +190,11 @@ export default function UploadRecord() {
 
           <button
             type="submit"
-            disabled={isUploading || !file}
+            disabled={isUploading || isTxPending || !file}
             className="w-full py-3.5 px-4 rounded-xl bg-medical-600 hover:bg-medical-700 text-white font-semibold text-xs shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2"
           >
             <Upload className="w-4 h-4" />
-            {isUploading ? 'Securing & Anchoring on Blockchain...' : 'Upload & Anchor Record'}
+            {isUploading || isTxPending ? 'Securing & Anchoring on Blockchain...' : 'Upload & Anchor Record'}
           </button>
         </form>
       </div>

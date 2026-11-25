@@ -27,4 +27,13 @@ async function connectDB() {
   }
 }
 
-module.exports = { connectDB };
+async function disconnectDB() {
+  try {
+    await mongoose.disconnect();
+    if (memServer) {
+      await memServer.stop({ doCleanup: true, force: true });
+    }
+  } catch (e) {}
+}
+
+module.exports = { connectDB, disconnectDB };

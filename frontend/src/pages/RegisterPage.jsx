@@ -5,7 +5,7 @@ import api from '../services/api';
 import { UserCheck, ShieldCheck, AlertCircle, CheckCircle } from 'lucide-react';
 
 export default function RegisterPage() {
-  const { account, contract, setUserRole, fetchMe } = useWeb3();
+  const { account, contract, setUserRole, fetchMe, executeTx, isTxPending } = useWeb3();
   const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
@@ -34,9 +34,9 @@ export default function RegisterPage() {
 
       // 1. Call Smart Contract: registerPatient(name)
       if (contract) {
-        const tx = await contract.registerPatient(formData.name);
-        setSuccessMsg('Waiting for blockchain transaction confirmation...');
-        await tx.wait();
+        await executeTx(async (c) => {
+          return await c.registerPatient(formData.name);
+        });
       }
 
       setSuccessMsg('2/2 Saving profile to secure database...');
@@ -128,10 +128,10 @@ export default function RegisterPage() {
 
           <button
             type="submit"
-            disabled={isLoading || !account}
+            disabled={isLoading || isTxPending || !account}
             className="w-full mt-4 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            {isLoading ? 'Processing on Blockchain...' : 'Register on Blockchain'}
+            {isLoading || isTxPending ? 'Processing on Blockchain...' : 'Register on Blockchain'}
           </button>
         </form>
       </div>
