@@ -78,11 +78,15 @@ export default function MyRecords() {
   };
 
   const filteredRecords = records.filter((r) => {
-    const matchesSearch =
-      r.fileName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.recordId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (r.description && r.description.toLowerCase().includes(searchTerm.toLowerCase()));
-    const matchesCat = selectedCategory === 'ALL' || r.category === selectedCategory;
+    const term = (searchTerm || '').trim().toLowerCase();
+    const fileName = (r.recordTitle || r.fileName || '').toLowerCase();
+    const recordId = (r.recordId || '').toLowerCase();
+    const desc = (r.description || '').toLowerCase();
+    const matchesSearch = !term || fileName.includes(term) || recordId.includes(term) || desc.includes(term);
+    const matchesCat =
+      selectedCategory === 'ALL' ||
+      r.category === selectedCategory ||
+      r.recordType === selectedCategory;
     return matchesSearch && matchesCat;
   });
 

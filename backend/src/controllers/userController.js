@@ -108,12 +108,21 @@ async function registerUser(req, res) {
  */
 async function getDoctors(req, res) {
   try {
-    const doctors = await Doctor.find().lean();
-    if (doctors.length > 0) {
-      return res.json({ doctors });
+    let rawDoctors = await Doctor.find().lean();
+    if (!rawDoctors || rawDoctors.length === 0) {
+      rawDoctors = await User.find({ role: "doctor" }).select("-nonce").lean();
     }
-    const userDoctors = await User.find({ role: "doctor" }).select("-nonce").lean();
-    return res.json({ doctors: userDoctors });
+    const doctors = (rawDoctors || []).map((d) => ({
+      ...d,
+      name: d.fullName || d.name || "Doctor",
+      fullName: d.fullName || d.name || "Doctor",
+      licenseNumber: d.medicalLicenseNumber || d.licenseNumber || "MED-VERIFIED",
+      medicalLicenseNumber: d.medicalLicenseNumber || d.licenseNumber || "MED-VERIFIED",
+      specialization: d.specialization || "General Medicine",
+      hospitalName: d.hospitalName || "Apollo Multi-Specialty Hospital",
+      walletAddress: (d.walletAddress || "").toLowerCase(),
+    }));
+    return res.json({ doctors });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -124,12 +133,18 @@ async function getDoctors(req, res) {
  */
 async function getHospitals(req, res) {
   try {
-    const hospitals = await Hospital.find().lean();
-    if (hospitals.length > 0) {
-      return res.json({ hospitals });
+    let rawHospitals = await Hospital.find().lean();
+    if (!rawHospitals || rawHospitals.length === 0) {
+      rawHospitals = await User.find({ role: "hospital" }).select("-nonce").lean();
     }
-    const userHospitals = await User.find({ role: "hospital" }).select("-nonce").lean();
-    return res.json({ hospitals: userHospitals });
+    const hospitals = (rawHospitals || []).map((h) => ({
+      ...h,
+      name: h.hospitalName || h.fullName || h.name || "Healthcare Facility",
+      fullName: h.hospitalName || h.fullName || h.name || "Healthcare Facility",
+      hospitalName: h.hospitalName || h.fullName || h.name || "Healthcare Facility",
+      walletAddress: (h.walletAddress || "").toLowerCase(),
+    }));
+    return res.json({ hospitals });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }

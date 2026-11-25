@@ -3,12 +3,14 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Navbar from './components/Navbar';
 import DashboardLayout from './components/DashboardLayout';
 import ProtectedRoute from './components/ProtectedRoute';
+import ErrorBoundary from './components/ErrorBoundary';
 
 // Public Pages
 import LandingPage from './pages/LandingPage';
 import AboutPage from './pages/AboutPage';
 import ConnectWalletPage from './pages/ConnectWalletPage';
 import RegisterPage from './pages/RegisterPage';
+import NotFoundPage from './pages/NotFoundPage';
 
 // Patient Pages
 import PatientDashboard from './dashboards/patient/PatientDashboard';
@@ -46,7 +48,8 @@ import GlobalAudit from './dashboards/admin/GlobalAudit';
 export default function App() {
   return (
     <Router>
-      <Routes>
+      <ErrorBoundary>
+        <Routes>
         {/* Public Routes with standard Navbar */}
         <Route
           path="/"
@@ -333,6 +336,36 @@ export default function App() {
           }
         />
         <Route
+          path="/admin/doctors"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <DashboardLayout role="admin">
+                <ViewUsers />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/patients"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <DashboardLayout role="admin">
+                <ViewUsers />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/hospitals"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <DashboardLayout role="admin">
+                <ViewUsers />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/admin/audit"
           element={
             <ProtectedRoute allowedRoles={['admin']}>
@@ -343,9 +376,10 @@ export default function App() {
           }
         />
 
-        {/* Fallback */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        {/* 404 Not Found Page */}
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
-    </Router>
-  );
+    </ErrorBoundary>
+  </Router>
+);
 }

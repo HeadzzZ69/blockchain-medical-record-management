@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
 import {
   Users,
@@ -23,6 +24,8 @@ import {
 } from 'lucide-react';
 
 export default function ViewUsers() {
+  const [searchParams] = useSearchParams();
+  const initialRoleParam = searchParams.get('role');
   const [users, setUsers] = useState([]);
   const [counts, setCounts] = useState({
     total: 0,
@@ -34,12 +37,19 @@ export default function ViewUsers() {
   });
   const [blockchainConnected, setBlockchainConnected] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [roleFilter, setRoleFilter] = useState('ALL');
+  const [roleFilter, setRoleFilter] = useState(initialRoleParam ? initialRoleParam.toLowerCase() : 'ALL');
   const [verificationFilter, setVerificationFilter] = useState('ALL');
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
   const [selectedUser, setSelectedUser] = useState(null);
   const [copiedWallet, setCopiedWallet] = useState('');
+
+  useEffect(() => {
+    const r = searchParams.get('role');
+    if (r) {
+      setRoleFilter(r.toLowerCase());
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     fetchUsers();
@@ -105,7 +115,9 @@ export default function ViewUsers() {
     const matchesSearch =
       name.includes(term) || wallet.includes(term) || email.includes(term) || facility.includes(term);
 
-    const matchesRole = roleFilter === 'ALL' || u.role === roleFilter;
+    const matchesRole =
+      roleFilter === 'ALL' ||
+      (u.role || '').toLowerCase() === (roleFilter || '').toLowerCase();
 
     let matchesVerification = true;
     if (verificationFilter === 'verified') {

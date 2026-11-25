@@ -131,14 +131,14 @@ export default function ManageAccess() {
                 <optgroup label="Doctors">
                   {doctors.map((d) => (
                     <option key={d.walletAddress} value={d.walletAddress}>
-                      {d.name} {d.specialization ? `(${d.specialization})` : ''}
+                      {d.fullName || d.name || 'Doctor'} {d.specialization ? `(${d.specialization})` : ''}
                     </option>
                   ))}
                 </optgroup>
                 <optgroup label="Hospitals">
                   {hospitals.map((h) => (
                     <option key={h.walletAddress} value={h.walletAddress}>
-                      {h.name}
+                      {h.hospitalName || h.fullName || h.name || 'Hospital'}
                     </option>
                   ))}
                 </optgroup>

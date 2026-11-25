@@ -78,51 +78,65 @@ export default function AdminDashboard() {
 
       {/* Metrics */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+        <Link
+          to="/admin/users"
+          className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between hover:border-slate-300 hover:shadow-md transition group"
+        >
           <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Users</p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider group-hover:text-purple-600 transition">
+              Total Users
+            </p>
             <h3 className="text-3xl font-bold text-slate-900 mt-1">{stats.usersCount}</h3>
           </div>
-          <div className="w-12 h-12 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center">
+          <div className="w-12 h-12 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center group-hover:bg-purple-50 group-hover:text-purple-600 transition">
             <Users className="w-6 h-6" />
           </div>
-        </div>
+        </Link>
 
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+        <Link
+          to="/admin/users?role=doctor"
+          className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between hover:border-sky-300 hover:shadow-md transition group"
+        >
           <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider group-hover:text-sky-600 transition">
               Registered Doctors
             </p>
             <h3 className="text-3xl font-bold text-slate-900 mt-1">{stats.doctorsCount}</h3>
           </div>
-          <div className="w-12 h-12 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center">
+          <div className="w-12 h-12 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center group-hover:bg-sky-100 transition">
             <Stethoscope className="w-6 h-6" />
           </div>
-        </div>
+        </Link>
 
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+        <Link
+          to="/admin/users?role=hospital"
+          className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between hover:border-indigo-300 hover:shadow-md transition group"
+        >
           <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider group-hover:text-indigo-600 transition">
               Registered Hospitals
             </p>
             <h3 className="text-3xl font-bold text-slate-900 mt-1">{stats.hospitalsCount}</h3>
           </div>
-          <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+          <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center group-hover:bg-indigo-100 transition">
             <Building2 className="w-6 h-6" />
           </div>
-        </div>
+        </Link>
 
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+        <Link
+          to="/admin/audit"
+          className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between hover:border-purple-300 hover:shadow-md transition group"
+        >
           <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider group-hover:text-purple-600 transition">
               On-Chain Events
             </p>
             <h3 className="text-3xl font-bold text-slate-900 mt-1">{stats.eventsCount}</h3>
           </div>
-          <div className="w-12 h-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+          <div className="w-12 h-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center group-hover:bg-purple-100 transition">
             <History className="w-6 h-6" />
           </div>
-        </div>
+        </Link>
       </div>
 
       {/* Recent Users Table */}
@@ -145,9 +159,9 @@ export default function AdminDashboard() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {recentUsers.map((u) => (
-                <tr key={u.walletAddress} className="hover:bg-slate-50/80 transition">
-                  <td className="px-6 py-4 font-semibold text-slate-900">{u.name}</td>
+              {recentUsers.map((u, i) => (
+                <tr key={u.walletAddress || i} className="hover:bg-slate-50/80 transition">
+                  <td className="px-6 py-4 font-semibold text-slate-900">{u.fullName || u.name || 'User'}</td>
                   <td className="px-6 py-4 font-mono text-slate-600">{u.walletAddress}</td>
                   <td className="px-6 py-4">
                     <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-slate-100 text-slate-800">
@@ -155,7 +169,9 @@ export default function AdminDashboard() {
                     </span>
                   </td>
                   <td className="px-6 py-4 text-slate-500">
-                    {new Date(u.createdAt).toLocaleDateString()}
+                    {u.createdAt || u.registrationDate
+                      ? new Date(u.createdAt || u.registrationDate).toLocaleDateString()
+                      : 'Active'}
                   </td>
                 </tr>
               ))}
